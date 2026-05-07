@@ -1,0 +1,41 @@
+post_install() {
+    if ! getent group pi-piper >/dev/null; then
+        groupadd --system pi-piper
+    fi
+    if ! id pi-piper >/dev/null 2>&1; then
+        useradd --system \
+            --gid pi-piper \
+            --groups audio,lp \
+            --home-dir /var/lib/pi-piper \
+            --shell /usr/bin/nologin \
+            pi-piper
+    fi
+    install -d -m 0755 -o pi-piper -g pi-piper /var/lib/pi-piper
+    install -d -m 0755 /etc/pi-piper
+    if [ ! -f /etc/pi-piper/config.yaml ]; then
+        install -m 0644 /usr/share/pi-piper/config.example.yaml /etc/pi-piper/config.yaml
+    fi
+    cat <<MSG
+==> pi-piper installed.
+==> Edit /etc/pi-piper/config.yaml then run:
+==>     systemctl enable --now pi-piper.service
+MSG
+}
+
+post_upgrade() {
+    post_install
+}
+
+pre_remove() {
+    systemctl stop pi-piper.service 2>/dev/null || true
+    systemctl disable pi-piper.service 2>/dev/null || true
+}
+
+post_remove() {
+    if getent passwd pi-piper >/dev/null; then
+        userdel pi-piper >/dev/null 2>&1 || true
+    fi
+    if getent group pi-piper >/dev/null; then
+        groupdel pi-piper >/dev/null 2>&1 || true
+    fi
+}

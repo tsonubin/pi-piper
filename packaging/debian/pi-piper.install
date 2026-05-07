@@ -1,0 +1,2 @@
+packaging/systemd/pi-piper.service lib/systemd/system
+src/pi_piper/data/config.example.yaml usr/share/pi-piper

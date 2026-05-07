@@ -1,0 +1,32 @@
+# /etc/pi-piper/config.yaml
+# Active output backend: one of bluetooth | airplay | sonos
+backend: bluetooth
+log_level: INFO
+
+# Analog input is captured via ALSA. On a Pi/OrangePi this typically means a
+# USB sound card or audio HAT. List capture devices with `arecord -l`.
+input:
+  device: plughw:1,0
+  rate: 44100
+  channels: 2
+  format: S16_LE
+  period_size: 1024
+
+bluetooth:
+  adapter: hci0
+  # Pair once with `pi-piper bluetooth pair <mac>`; that writes target_mac here.
+  target_mac: null
+  auto_reconnect: true
+
+airplay:
+  # Discover with `pi-piper airplay scan`, then `pi-piper airplay use <id>`.
+  target_id: null
+  target_name: null
+  credentials: {}
+
+sonos:
+  # Discover with `pi-piper sonos scan`, then `pi-piper sonos use <uid>`.
+  target_uid: null
+  target_name: null
+  stream_port: 8973
+  stream_codec: wav

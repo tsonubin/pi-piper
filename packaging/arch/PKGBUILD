@@ -1,0 +1,50 @@
+# Maintainer: pi-piper contributors <noreply@example.com>
+pkgname=pi-piper
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Pipe analog audio (RCA/3.5mm) from a Pi/OrangePi to Bluetooth, AirPlay, or Sonos"
+arch=('any')
+url="https://github.com/tsonubin/pi-piper"
+license=('MIT')
+depends=(
+    'python>=3.10'
+    'python-click'
+    'python-yaml'
+    'python-soco'
+    'python-pyatv'
+    'python-dbus-next'
+    'python-zeroconf'
+    'alsa-utils'
+    'bluez'
+    'bluez-utils'
+    'libpulse'
+)
+optdepends=(
+    'pipewire-pulse: PulseAudio-compatible audio server (recommended)'
+    'pulseaudio-bluetooth: A2DP source support for PulseAudio'
+    'ffmpeg: AirPlay transcoding'
+)
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+backup=('etc/pi-piper/config.yaml')
+install=pi-piper.install
+source=("$pkgname-$pkgver.tar.gz::https://github.com/tsonubin/pi-piper/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    python -m installer --destdir="$pkgdir" dist/*.whl
+
+    install -Dm644 packaging/systemd/pi-piper.service \
+        "$pkgdir/usr/lib/systemd/system/pi-piper.service"
+
+    install -Dm644 src/pi_piper/data/config.example.yaml \
+        "$pkgdir/usr/share/pi-piper/config.example.yaml"
+
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

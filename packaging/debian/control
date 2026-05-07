@@ -1,0 +1,30 @@
+Source: pi-piper
+Section: sound
+Priority: optional
+Maintainer: pi-piper contributors <noreply@example.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+               python3-pip
+Standards-Version: 4.6.2
+Homepage: https://github.com/tsonubin/pi-piper
+Rules-Requires-Root: no
+
+Package: pi-piper
+Architecture: all
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3 (>= 3.10),
+         python3-click,
+         python3-yaml,
+         alsa-utils,
+         bluez,
+         pulseaudio-utils | pipewire-pulse,
+         adduser
+Recommends: pipewire-pulse, libspa-0.2-bluetooth, ffmpeg
+Description: Pipe analog audio to Bluetooth, AirPlay, or Sonos
+ pi-piper captures analog line-in (RCA / 3.5mm via a USB sound card or audio
+ HAT) on a Raspberry Pi or OrangePi and streams it to a Bluetooth speaker,
+ an AirPlay receiver, or a Sonos zone. Includes a CLI for pairing and
+ device selection plus a systemd service.

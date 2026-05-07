@@ -1,0 +1,28 @@
+[Unit]
+Description=pi-piper analog-to-network audio bridge
+Documentation=https://github.com/tsonubin/pi-piper
+After=sound.target network-online.target bluetooth.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi-piper
+Group=pi-piper
+SupplementaryGroups=audio bluetooth
+Environment=PI_PIPER_CONFIG=/etc/pi-piper/config.yaml
+Environment=PI_PIPER_STATE_DIR=/var/lib/pi-piper
+ExecStart=/usr/bin/pi-piperd
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/pi-piper /run
+RuntimeDirectory=pi-piper
+StateDirectory=pi-piper
+ConfigurationDirectory=pi-piper
+
+[Install]
+WantedBy=multi-user.target

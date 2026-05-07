@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        if ! getent group pi-piper >/dev/null; then
+            addgroup --system pi-piper
+        fi
+        if ! id pi-piper >/dev/null 2>&1; then
+            adduser --system --ingroup pi-piper \
+                --home /var/lib/pi-piper \
+                --no-create-home \
+                --shell /usr/sbin/nologin \
+                pi-piper
+            adduser pi-piper audio || true
+            adduser pi-piper bluetooth || true
+        fi
+        install -d -m 0755 -o pi-piper -g pi-piper /var/lib/pi-piper
+        install -d -m 0755 /etc/pi-piper
+        if [ ! -f /etc/pi-piper/config.yaml ] && [ -f /usr/share/pi-piper/config.example.yaml ]; then
+            install -m 0644 /usr/share/pi-piper/config.example.yaml /etc/pi-piper/config.yaml
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
