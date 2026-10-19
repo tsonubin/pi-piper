@@ -143,6 +143,17 @@ pi-piper service start | stop | restart | enable | disable | status | logs [-f]
   be `S16_LE` for them; the Bluetooth backend passes any ALSA capture
   format through to paplay unchanged.
 
+## Development
+
+`uv` is the blessed toolchain (any venv + pip works too):
+
+```sh
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e '.[dev]'
+.venv/bin/python -m pytest -q    # targeted tests live in tests/
+.venv/bin/ruff check src tests
+```
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
