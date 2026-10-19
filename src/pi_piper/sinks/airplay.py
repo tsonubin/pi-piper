@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import struct
@@ -68,7 +69,8 @@ class AirPlaySink(AudioSink):
         self._writer_thread: threading.Thread | None = None
         self._fifo_path: Path | None = None
         self._stop = threading.Event()
-        self._stream_task: asyncio.Task | None = None
+        self._stream_done = threading.Event()
+        self._airplay_future: concurrent.futures.Future[None] | None = None
 
     def _make_fifo(self) -> Path:
         fifo_dir = state_dir() / "airplay"
@@ -137,9 +139,14 @@ class AirPlaySink(AudioSink):
         while self._loop is None:
             threading.Event().wait(0.01)
 
-        fut = asyncio.run_coroutine_threadsafe(
-            self._start_async(self._fifo_path), self._loop
-        )
+        async def _runner() -> None:
+            try:
+                await self._start_async(self._fifo_path)
+            finally:
+                self._stream_done.set()
+
+        self._stream_done.clear()
+        fut = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
 
         def _writer() -> None:
             assert self._fifo_path is not None
@@ -156,13 +163,31 @@ class AirPlaySink(AudioSink):
                     except BrokenPipeError:
                         break
 
-        self._writer_thread = threading.Thread(target=_writer, daemon=True, name="pi-piper-airplay-writer")
+        self._writer_thread = threading.Thread(
+            target=_writer, daemon=True, name="pi-piper-airplay-writer"
+        )
         self._writer_thread.start()
+        fut.add_done_callback(self._stream_finished)
         self._airplay_future = fut
+
+    def _stream_finished(self, fut: concurrent.futures.Future[None]) -> None:
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc is not None:
+            log.error("airplay stream failed: %s", exc)
+        else:
+            log.info("airplay stream ended")
 
     def stop(self) -> None:
         self._stop.set()
         if self._loop is not None:
+            fut = self._airplay_future
+            if fut is not None and not fut.done():
+                # Cancel the stream task and wait for the coroutine to unwind
+                # so its `finally: atv.close()` runs before the loop stops.
+                self._loop.call_soon_threadsafe(fut.cancel)
+                self._stream_done.wait(timeout=2)
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._loop_thread is not None:
             self._loop_thread.join(timeout=5)
@@ -174,7 +199,15 @@ class AirPlaySink(AudioSink):
         self._loop = None
         self._loop_thread = None
         self._writer_thread = None
+        self._airplay_future = None
         self._fifo_path = None
 
     def is_alive(self) -> bool:
-        return self._loop_thread is not None and self._loop_thread.is_alive()
+        if self._loop_thread is None or not self._loop_thread.is_alive():
+            return False
+        fut = self._airplay_future
+        if fut is not None and fut.done():
+            # Stream ended or failed: the pipeline is dead even though the
+            # event loop thread is still parked in run_forever().
+            return False
+        return True
