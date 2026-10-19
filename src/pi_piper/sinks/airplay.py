@@ -7,12 +7,27 @@ import os
 import struct
 import threading
 from pathlib import Path
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
 from pi_piper.config import Config, state_dir
 from pi_piper.sinks.base import AudioSink, SinkError
 
+if TYPE_CHECKING:
+    from pyatv.const import Protocol
+
 log = logging.getLogger(__name__)
+
+
+def _protocol_enum(proto: str) -> Protocol:
+    """Resolve a user-supplied AirPlay protocol name (any case) to pyatv's
+    Protocol enum, e.g. "raop" -> Protocol.RAOP."""
+    from pyatv.const import Protocol as _Protocol
+
+    for member in _Protocol:
+        if member.name.lower() == proto.lower():
+            return member
+    known = ", ".join(m.name.lower() for m in _Protocol)
+    raise SinkError(f"unknown airplay protocol {proto!r}; known: {known}")
 
 
 def _wav_header(rate: int, channels: int, bits: int = 16) -> bytes:
@@ -116,10 +131,9 @@ class AirPlaySink(AudioSink):
             raise SinkError(f"airplay target not found (id={target_id} name={target_name})")
         for proto, creds in self.cfg.airplay.credentials.items():
             try:
-                proto_enum = getattr(pyatv.const.Protocol, proto.capitalize())
-                match.set_credentials(proto_enum, creds)
-            except Exception as e:
-                log.warning("could not apply credentials for %s: %s", proto, e)
+                match.set_credentials(_protocol_enum(proto), creds)
+            except SinkError as e:
+                log.warning("could not apply credentials: %s", e)
         atv = await pyatv.connect(match, loop)
         try:
             log.info("streaming to airplay device %s", match.name)
