@@ -88,12 +88,18 @@ class AlsaCapture:
         if self._proc is None:
             return
         proc, self._proc = self._proc, None
-        proc.terminate()
         try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        finally:
+            # Popen.wait() does not close stdout; repeated daemon restarts
+            # would otherwise retain one pipe FD per capture generation.
+            if proc.stdout is not None:
+                proc.stdout.close()
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
