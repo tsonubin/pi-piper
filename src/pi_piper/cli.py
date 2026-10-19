@@ -69,7 +69,10 @@ def grp_input() -> None:
 @grp_input.command("list")
 def cmd_input_list() -> None:
     """List ALSA capture devices."""
-    devs = list_capture_devices()
+    try:
+        devs = list_capture_devices()
+    except FileNotFoundError as e:
+        raise click.ClickException(str(e)) from e
     if not devs:
         click.echo("no capture devices found (run `arecord -l`)", err=True)
         sys.exit(1)
@@ -115,9 +118,12 @@ def cmd_bt_scan(ctx: click.Context, duration: float) -> None:
     """Discover nearby Bluetooth devices."""
     from pi_piper.sinks.bluetooth import BluetoothCtl
     cfg: Config = ctx.obj["cfg"]
-    ctl = BluetoothCtl(cfg.bluetooth.adapter)
-    click.echo(f"scanning for {duration:.0f}s...")
-    devs = ctl.scan(duration)
+    try:
+        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        click.echo(f"scanning for {duration:.0f}s...")
+        devs = ctl.scan(duration)
+    except (SinkError, subprocess.TimeoutExpired) as e:
+        raise click.ClickException(str(e)) from e
     if not devs:
         click.echo("no devices found")
         return
@@ -139,14 +145,13 @@ def cmd_bt_pair(ctx: click.Context, mac: str, connect: bool) -> None:
     """Pair (and optionally connect) a Bluetooth speaker by MAC."""
     from pi_piper.sinks.bluetooth import BluetoothCtl
     cfg: Config = ctx.obj["cfg"]
-    ctl = BluetoothCtl(cfg.bluetooth.adapter)
     try:
+        ctl = BluetoothCtl(cfg.bluetooth.adapter)
         ctl.pair(mac)
         if connect:
             ctl.connect(mac)
-    except SinkError as e:
-        click.echo(f"error: {e}", err=True)
-        sys.exit(1)
+    except (SinkError, subprocess.TimeoutExpired) as e:
+        raise click.ClickException(str(e)) from e
     cfg.bluetooth.target_mac = mac
     path = cfg.save(ctx.obj.get("cfg_path"))
     click.echo(f"paired {mac}; saved to {path}")
@@ -172,8 +177,11 @@ def cmd_bt_connect(ctx: click.Context) -> None:
     if not cfg.bluetooth.target_mac:
         click.echo("no target configured; run `pi-piper bluetooth pair <MAC>`", err=True)
         sys.exit(1)
-    ctl = BluetoothCtl(cfg.bluetooth.adapter)
-    ctl.connect(cfg.bluetooth.target_mac)
+    try:
+        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        ctl.connect(cfg.bluetooth.target_mac)
+    except (SinkError, subprocess.TimeoutExpired) as e:
+        raise click.ClickException(str(e)) from e
     click.echo(f"connected {cfg.bluetooth.target_mac}")
 
 
@@ -186,8 +194,11 @@ def cmd_bt_disconnect(ctx: click.Context) -> None:
     if not cfg.bluetooth.target_mac:
         click.echo("no target configured", err=True)
         sys.exit(1)
-    ctl = BluetoothCtl(cfg.bluetooth.adapter)
-    ctl.disconnect(cfg.bluetooth.target_mac)
+    try:
+        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        ctl.disconnect(cfg.bluetooth.target_mac)
+    except (SinkError, subprocess.TimeoutExpired) as e:
+        raise click.ClickException(str(e)) from e
     click.echo(f"disconnected {cfg.bluetooth.target_mac}")
 
 
@@ -202,7 +213,10 @@ def grp_airplay() -> None:
 def cmd_airplay_scan(timeout: float, as_json: bool) -> None:
     """Discover AirPlay receivers via mDNS."""
     from pi_piper.sinks.airplay import scan_airplay
-    devices = scan_airplay(timeout)
+    try:
+        devices = scan_airplay(timeout)
+    except SinkError as e:
+        raise click.ClickException(str(e)) from e
     if as_json:
         click.echo(json.dumps(devices, indent=2))
         return
@@ -252,7 +266,10 @@ def grp_sonos() -> None:
 def cmd_sonos_scan(as_json: bool) -> None:
     """Discover Sonos zones on the LAN."""
     from pi_piper.sinks.sonos import discover_sonos
-    devices = discover_sonos()
+    try:
+        devices = discover_sonos()
+    except SinkError as e:
+        raise click.ClickException(str(e)) from e
     if as_json:
         click.echo(json.dumps(devices, indent=2))
         return
