@@ -24,7 +24,6 @@ dependencies = [
     "PyYAML>=6.0",
     "soco>=0.30",
     "pyatv>=0.15",
-    "dbus-next>=0.2.3",
     "zeroconf>=0.131",
 ]
 
@@ -47,7 +46,7 @@ Issues = "https://github.com/tsonubin/pi-piper/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pi_piper = ["data/*.yaml", "data/systemd/*.service"]
+pi_piper = ["data/*.yaml"]
 
 [tool.ruff]
 line-length = 100
