@@ -120,9 +120,8 @@ def grp_bt() -> None:
 def cmd_bt_scan(ctx: click.Context, duration: float) -> None:
     """Discover nearby Bluetooth devices."""
     from pi_piper.sinks.bluetooth import BluetoothCtl
-    cfg: Config = ctx.obj["cfg"]
     try:
-        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        ctl = BluetoothCtl()
         click.echo(f"scanning for {duration:.0f}s...")
         devs = ctl.scan(duration)
     except (SinkError, subprocess.TimeoutExpired) as e:
@@ -149,7 +148,7 @@ def cmd_bt_pair(ctx: click.Context, mac: str, connect: bool) -> None:
     from pi_piper.sinks.bluetooth import BluetoothCtl
     cfg: Config = ctx.obj["cfg"]
     try:
-        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        ctl = BluetoothCtl()
         ctl.pair(mac)
         if connect:
             ctl.connect(mac)
@@ -181,7 +180,7 @@ def cmd_bt_connect(ctx: click.Context) -> None:
         click.echo("no target configured; run `pi-piper bluetooth pair <MAC>`", err=True)
         sys.exit(1)
     try:
-        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        ctl = BluetoothCtl()
         ctl.connect(cfg.bluetooth.target_mac)
     except (SinkError, subprocess.TimeoutExpired) as e:
         raise click.ClickException(str(e)) from e
@@ -198,7 +197,7 @@ def cmd_bt_disconnect(ctx: click.Context) -> None:
         click.echo("no target configured", err=True)
         sys.exit(1)
     try:
-        ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        ctl = BluetoothCtl()
         ctl.disconnect(cfg.bluetooth.target_mac)
     except (SinkError, subprocess.TimeoutExpired) as e:
         raise click.ClickException(str(e)) from e

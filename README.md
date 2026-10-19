@@ -142,6 +142,8 @@ pi-piper service start | stop | restart | enable | disable | status | logs [-f]
 - The Sonos and AirPlay backends stream 16-bit WAV, so `input.format` must
   be `S16_LE` for them; the Bluetooth backend passes any ALSA capture
   format through to paplay unchanged.
+- Bluetooth uses bluez's default adapter (the first one bluez brings up);
+  picking among several adapters is not supported yet.
 
 ## Development
 

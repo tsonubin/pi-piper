@@ -97,9 +97,3 @@ class AlsaCapture:
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
-
-    def __enter__(self) -> IO[bytes]:
-        return self.start()
-
-    def __exit__(self, *_exc: object) -> None:
-        self.stop()

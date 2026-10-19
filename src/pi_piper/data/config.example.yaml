@@ -13,10 +13,9 @@ input:
   period_size: 1024
 
 bluetooth:
-  adapter: hci0
-  # Pair once with `pi-piper bluetooth pair <mac>`; that writes target_mac here.
+  # Pair once with `pi-piper bluetooth pair <mac>`; that writes target_mac
+  # here. Uses bluez's default Bluetooth adapter.
   target_mac: null
-  auto_reconnect: true
 
 airplay:
   # Discover with `pi-piper airplay scan`, then `pi-piper airplay use <id>`.
@@ -29,4 +28,3 @@ sonos:
   target_uid: null
   target_name: null
   stream_port: 8973
-  stream_codec: wav

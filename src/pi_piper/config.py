@@ -31,9 +31,7 @@ class InputConfig:
 
 @dataclass
 class BluetoothConfig:
-    adapter: str = "hci0"
     target_mac: str | None = None
-    auto_reconnect: bool = True
 
 
 @dataclass
@@ -48,7 +46,6 @@ class SonosConfig:
     target_uid: str | None = None
     target_name: str | None = None
     stream_port: int = 8973
-    stream_codec: str = "wav"
 
 
 @dataclass
