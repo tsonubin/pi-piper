@@ -11,7 +11,7 @@ import click
 from pi_piper import __version__
 from pi_piper.audio import list_capture_devices
 from pi_piper.audio.formats import alsa_format_bits
-from pi_piper.config import Config
+from pi_piper.config import Config, ConfigError
 from pi_piper.sinks.base import SinkError
 
 
@@ -31,7 +31,10 @@ def main(ctx: click.Context, config_path: Path | None, verbose: bool) -> None:
     """pi-piper: stream analog line-in to Bluetooth, AirPlay, or Sonos."""
     _setup_logging(verbose)
     ctx.ensure_object(dict)
-    ctx.obj["cfg"] = Config.load(config_path)
+    try:
+        ctx.obj["cfg"] = Config.load(config_path)
+    except ConfigError as e:
+        raise click.ClickException(str(e)) from e
     ctx.obj["cfg_path"] = config_path
 
 

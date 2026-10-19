@@ -7,7 +7,7 @@ import threading
 import time
 
 from pi_piper.audio import AlsaCapture
-from pi_piper.config import Config
+from pi_piper.config import Config, ConfigError
 from pi_piper.sinks import build_sink
 from pi_piper.sinks.base import SinkError
 
@@ -84,7 +84,13 @@ def run(cfg: Config) -> int:
 
 
 def main() -> None:
-    cfg = Config.load()
+    try:
+        cfg = Config.load()
+    except ConfigError as e:
+        # logging is configured inside run(); a broken config exits before
+        # that, so report directly.
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
     sys.exit(run(cfg))
 
 

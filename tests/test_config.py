@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
 
 import pi_piper.config
-from pi_piper.config import Config
+from pi_piper.config import Config, ConfigError
 
 
 @pytest.fixture
@@ -106,9 +107,53 @@ def test_non_mapping_section_falls_back_to_defaults(paths: tuple[Path, Path]) ->
 
 
 def test_saved_config_is_not_world_readable(paths: tuple[Path, Path]) -> None:
-    import stat
-
     _system, user = paths
     saved = Config().save(user)  # no explicit path resolution: new user file
     assert saved == user
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+
+
+def test_invalid_yaml_raises_config_error_naming_file(
+    paths: tuple[Path, Path], tmp_path: Path
+) -> None:
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("backend: [unclosed\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as exc:
+        Config.load(broken)
+    assert str(broken) in str(exc.value)
+    assert "invalid YAML" in str(exc.value)
+
+
+def test_empty_config_file_loads_defaults(paths: tuple[Path, Path]) -> None:
+    empty = paths[1]
+    empty.parent.mkdir(parents=True, exist_ok=True)
+    empty.touch()
+    cfg = Config.load(empty)
+    assert cfg.backend == "bluetooth"
+    assert cfg.input.rate == 44100
+
+
+def test_failed_save_leaves_existing_config_intact(
+    paths: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _system, user = paths
+    Config().save(user)
+    original = user.read_text(encoding="utf-8")
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("pi_piper.config.yaml.safe_dump", _boom)
+    with pytest.raises(OSError, match="disk full"):
+        Config().save(user)
+
+    assert user.read_text(encoding="utf-8") == original, "old config must survive"
+    assert not user.with_name(user.name + ".tmp").exists(), "no temp file residue"
+
+
+def test_save_preserves_existing_file_mode(paths: tuple[Path, Path]) -> None:
+    _system, user = paths
+    Config().save(user)
+    user.chmod(0o640)
+    Config().save(user)
+    assert stat.S_IMODE(user.stat().st_mode) == 0o640

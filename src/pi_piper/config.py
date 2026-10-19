@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,10 @@ log = logging.getLogger(__name__)
 DEFAULT_SYSTEM_CONFIG = Path("/etc/pi-piper/config.yaml")
 DEFAULT_USER_CONFIG = Path.home() / ".config" / "pi-piper" / "config.yaml"
 DEFAULT_STATE_DIR = Path("/var/lib/pi-piper")
+
+
+class ConfigError(RuntimeError):
+    """The config file exists but cannot be parsed."""
 
 
 @dataclass
@@ -61,7 +66,10 @@ class Config:
         if not path.exists():
             return cls()
         with path.open("r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
+            try:
+                data = yaml.safe_load(fh) or {}
+            except yaml.YAMLError as e:
+                raise ConfigError(f"{path}: invalid YAML: {e}") from e
         return cls._from_dict(data)
 
     @classmethod
@@ -85,14 +93,26 @@ class Config:
         path = path or _resolve_config_path(prefer_writable=True)
         path.parent.mkdir(parents=True, exist_ok=True)
         created = not path.exists()
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(asdict(self), fh, sort_keys=False)
-        if created:
-            # AirPlay credentials end up in this file: keep user configs
-            # private. Files under /etc stay world-readable because the
-            # service user has to read them.
-            mode = 0o644 if path.is_relative_to(Path("/etc")) else 0o600
-            os.chmod(path, mode)
+        # Atomic replace: write to a sibling temp file, then os.replace() it
+        # over the target. A crash mid-write must never leave a truncated
+        # config (the next load would then fail, possibly with credentials
+        # half-written). Same directory keeps the rename on one filesystem.
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as fh:
+                yaml.safe_dump(asdict(self), fh, sort_keys=False)
+            if created:
+                # AirPlay credentials end up in this file: keep user configs
+                # private. Files under /etc stay world-readable because the
+                # service user has to read them.
+                mode = 0o644 if path.is_relative_to(Path("/etc")) else 0o600
+            else:
+                mode = stat.S_IMODE(path.stat().st_mode)
+            os.chmod(tmp, mode)
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         return path
 
 
