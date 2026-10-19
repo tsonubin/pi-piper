@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_CONFIG = Path("/etc/pi-piper/config.yaml")
 DEFAULT_USER_CONFIG = Path.home() / ".config" / "pi-piper" / "config.yaml"
@@ -64,28 +67,47 @@ class Config:
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> Config:
         cfg = cls()
-        if "backend" in data:
-            cfg.backend = data["backend"]
-        if "log_level" in data:
-            cfg.log_level = data["log_level"]
-        if "input" in data:
-            cfg.input = InputConfig(**{**asdict(cfg.input), **(data["input"] or {})})
-        if "bluetooth" in data:
-            cfg.bluetooth = BluetoothConfig(
-                **{**asdict(cfg.bluetooth), **(data["bluetooth"] or {})}
-            )
-        if "airplay" in data:
-            cfg.airplay = AirPlayConfig(**{**asdict(cfg.airplay), **(data["airplay"] or {})})
-        if "sonos" in data:
-            cfg.sonos = SonosConfig(**{**asdict(cfg.sonos), **(data["sonos"] or {})})
+        if not isinstance(data, dict):
+            log.warning("config root must be a mapping; using defaults")
+            return cfg
+        for key, value in data.items():
+            if key == "backend":
+                cfg.backend = value
+            elif key == "log_level":
+                cfg.log_level = value
+            elif key in ("input", "bluetooth", "airplay", "sonos"):
+                _apply_section(getattr(cfg, key), value, key)
+            else:
+                log.warning("ignoring unknown config key %r", key)
         return cfg
 
     def save(self, path: Path | None = None) -> Path:
         path = path or _resolve_config_path(prefer_writable=True)
         path.parent.mkdir(parents=True, exist_ok=True)
+        created = not path.exists()
         with path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(asdict(self), fh, sort_keys=False)
+        if created:
+            # AirPlay credentials end up in this file: keep user configs
+            # private. Files under /etc stay world-readable because the
+            # service user has to read them.
+            mode = 0o644 if path.is_relative_to(Path("/etc")) else 0o600
+            os.chmod(path, mode)
         return path
+
+
+def _apply_section(section: Any, data: Any, label: str) -> None:
+    if data is None:
+        return
+    if not isinstance(data, dict):
+        log.warning("ignoring config section %r: expected a mapping", label)
+        return
+    known = {f.name for f in fields(section)}
+    for key, value in data.items():
+        if key not in known:
+            log.warning("ignoring unknown config key %s.%s", label, key)
+            continue
+        setattr(section, key, value)
 
 
 def _resolve_config_path(prefer_writable: bool = False) -> Path:

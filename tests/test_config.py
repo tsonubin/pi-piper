@@ -76,3 +76,39 @@ def test_unwritable_system_config_roundtrip(
     assert saved == user
 
     assert Config.load().backend == "sonos", "saved change must survive a reload"
+
+
+def test_unknown_keys_are_ignored_not_fatal(paths: tuple[Path, Path]) -> None:
+    system, _user = paths
+    system.parent.mkdir(parents=True, exist_ok=True)
+    system.write_text(
+        "backend: airplay\n"
+        "backand: typo\n"  # unknown top-level key
+        "input:\n"
+        "  device: plughw:2,0\n"
+        "  ratee: 48000\n"  # unknown section key
+        "  rate: 48000\n",
+        encoding="utf-8",
+    )
+    cfg = Config.load()
+    assert cfg.backend == "airplay"
+    assert cfg.input.device == "plughw:2,0"
+    assert cfg.input.rate == 48000  # known keys still apply
+
+
+def test_non_mapping_section_falls_back_to_defaults(paths: tuple[Path, Path]) -> None:
+    system, _user = paths
+    system.parent.mkdir(parents=True, exist_ok=True)
+    system.write_text("input: not-a-mapping\n", encoding="utf-8")
+    cfg = Config.load()
+    assert cfg.input.device == "default"
+    assert cfg.input.rate == 44100
+
+
+def test_saved_config_is_not_world_readable(paths: tuple[Path, Path]) -> None:
+    import stat
+
+    _system, user = paths
+    saved = Config().save(user)  # no explicit path resolution: new user file
+    assert saved == user
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
