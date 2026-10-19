@@ -92,10 +92,14 @@ def _resolve_config_path(prefer_writable: bool = False) -> Path:
     env = os.environ.get("PI_PIPER_CONFIG")
     if env:
         return Path(env)
-    if DEFAULT_SYSTEM_CONFIG.exists() and not prefer_writable:
-        return DEFAULT_SYSTEM_CONFIG
+    # An existing user config overrides the system one (XDG-style
+    # precedence). Reads and writes must agree: mutating CLI commands save
+    # without root, so a save that lands in the user file while loads keep
+    # preferring /etc would silently discard every change.
     if DEFAULT_USER_CONFIG.exists():
         return DEFAULT_USER_CONFIG
+    if DEFAULT_SYSTEM_CONFIG.exists() and not prefer_writable:
+        return DEFAULT_SYSTEM_CONFIG
     if prefer_writable and os.access("/etc/pi-piper", os.W_OK):
         return DEFAULT_SYSTEM_CONFIG
     return DEFAULT_USER_CONFIG

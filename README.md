@@ -59,7 +59,11 @@ sudo systemctl daemon-reload
 ## Configure
 
 Config lives at `/etc/pi-piper/config.yaml` (system) or
-`~/.config/pi-piper/config.yaml` (user). Override with `PI_PIPER_CONFIG`.
+`~/.config/pi-piper/config.yaml` (user). Precedence: `PI_PIPER_CONFIG`, then
+an existing user config, then the system config — so `pi-piper` commands run
+without sudo write to the user file, which then wins on every later run. The
+systemd unit pins `PI_PIPER_CONFIG=/etc/pi-piper/config.yaml`, so the service
+always reads the system file.
 
 ```sh
 # 1. Pick your capture device.
