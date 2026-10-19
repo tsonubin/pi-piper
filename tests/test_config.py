@@ -157,3 +157,37 @@ def test_save_preserves_existing_file_mode(paths: tuple[Path, Path]) -> None:
     user.chmod(0o640)
     Config().save(user)
     assert stat.S_IMODE(user.stat().st_mode) == 0o640
+
+
+def test_wrong_typed_scalars_are_coerced(paths: tuple[Path, Path]) -> None:
+    """Hand-edited YAML commonly quotes numbers or drops quotes; both must
+    load as the declared type instead of crashing the daemon mid-run."""
+    system, _user = paths
+    system.parent.mkdir(parents=True, exist_ok=True)
+    system.write_text(
+        "bluetooth:\n  target_mac: 12345\n"  # int where str is declared
+        "input:\n  rate: '48000'\n"  # digit string where int is declared
+        "sonos:\n  stream_port: 8974.0\n",  # integral float where int is declared
+        encoding="utf-8",
+    )
+    cfg = Config.load(system)
+    assert cfg.bluetooth.target_mac == "12345"
+    assert cfg.input.rate == 48000
+    assert cfg.sonos.stream_port == 8974
+
+
+def test_incoercible_values_fall_back_to_defaults(paths: tuple[Path, Path]) -> None:
+    system, _user = paths
+    system.parent.mkdir(parents=True, exist_ok=True)
+    system.write_text(
+        "log_level: 42\n"
+        "input:\n  rate: fast\n"
+        "bluetooth:\n  target_mac: {a: b}\n"
+        "airplay:\n  credentials: nope\n",
+        encoding="utf-8",
+    )
+    cfg = Config.load(system)
+    assert cfg.log_level == "INFO"
+    assert cfg.input.rate == 44100
+    assert cfg.bluetooth.target_mac is None
+    assert cfg.airplay.credentials == {}

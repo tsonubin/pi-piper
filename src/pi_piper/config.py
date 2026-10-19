@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import stat
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -77,9 +77,16 @@ class Config:
             return cfg
         for key, value in data.items():
             if key == "backend":
-                cfg.backend = value
+                cfg.backend = value if isinstance(value, str) else str(value)
             elif key == "log_level":
-                cfg.log_level = value
+                if isinstance(value, str):
+                    cfg.log_level = value
+                else:
+                    log.warning(
+                        "config log_level: expected a string, got %r; using default %r",
+                        value,
+                        cfg.log_level,
+                    )
             elif key in ("input", "bluetooth", "airplay", "sonos"):
                 _apply_section(getattr(cfg, key), value, key)
             else:
@@ -124,7 +131,54 @@ def _apply_section(section: Any, data: Any, label: str) -> None:
         if key not in known:
             log.warning("ignoring unknown config key %s.%s", label, key)
             continue
-        setattr(section, key, value)
+        setattr(section, key, _coerce(section, key, value, label))
+
+
+def _coerce(section: Any, key: str, value: Any, label: str) -> Any:
+    """Coerce hand-edited YAML scalars to the field's declared type.
+
+    A wrong-typed value used to reach runtime as-is and crash the daemon
+    mid-run (an int target_mac kills the subprocess spawn with TypeError,
+    which escapes the retry loop and crash-loops the systemd unit). Instead
+    coerce what is sane and fall back to the default with a warning, so the
+    appliance still starts.
+    """
+    f = next(f for f in fields(section) if f.name == key)
+    ftype = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", "")
+    default = f.default if f.default is not MISSING else f.default_factory()
+
+    def _fallback(reason: str) -> Any:
+        log.warning(
+            "config %s.%s: %s, got %r; using default %r", label, key, reason, value, default
+        )
+        return default
+
+    if ftype.startswith("dict"):
+        if isinstance(value, dict):
+            return value
+        return _fallback("expected a mapping")
+    if ftype == "int":
+        if isinstance(value, bool):
+            return _fallback("expected a number")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except ValueError:
+                pass
+        return _fallback("expected a number")
+    if ftype.startswith("str"):
+        if isinstance(value, str):
+            return value
+        if isinstance(value, bool):
+            return _fallback("expected a string")
+        if isinstance(value, int | float):
+            return str(value)
+        return _fallback("expected a string")
+    return value
 
 
 def _resolve_config_path(prefer_writable: bool = False) -> Path:
