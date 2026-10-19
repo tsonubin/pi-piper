@@ -10,6 +10,7 @@ import click
 
 from pi_piper import __version__
 from pi_piper.audio import list_capture_devices
+from pi_piper.audio.formats import alsa_format_bits
 from pi_piper.config import Config
 from pi_piper.sinks.base import SinkError
 
@@ -40,7 +41,10 @@ def cmd_status(ctx: click.Context) -> None:
     """Show the active config and resolved targets."""
     cfg: Config = ctx.obj["cfg"]
     click.echo(f"backend: {cfg.backend}")
-    click.echo(f"input: {cfg.input.device} {cfg.input.rate}Hz {cfg.input.channels}ch {cfg.input.format}")
+    click.echo(
+        f"input: {cfg.input.device} {cfg.input.rate}Hz "
+        f"{cfg.input.channels}ch {cfg.input.format}"
+    )
     click.echo(f"bluetooth target: {cfg.bluetooth.target_mac or '(unset)'}")
     click.echo(f"airplay target: {cfg.airplay.target_name or cfg.airplay.target_id or '(unset)'}")
     click.echo(f"sonos target: {cfg.sonos.target_name or cfg.sonos.target_uid or '(unset)'}")
@@ -79,7 +83,9 @@ def cmd_input_list() -> None:
 @click.option("--channels", type=int, default=None)
 @click.option("--format", "fmt", default=None)
 @click.pass_context
-def cmd_input_set(ctx: click.Context, device: str, rate: int | None, channels: int | None, fmt: str | None) -> None:
+def cmd_input_set(
+    ctx: click.Context, device: str, rate: int | None, channels: int | None, fmt: str | None
+) -> None:
     """Configure the ALSA capture device."""
     cfg: Config = ctx.obj["cfg"]
     cfg.input.device = device
@@ -88,6 +94,10 @@ def cmd_input_set(ctx: click.Context, device: str, rate: int | None, channels: i
     if channels is not None:
         cfg.input.channels = channels
     if fmt is not None:
+        try:
+            alsa_format_bits(fmt)
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
         cfg.input.format = fmt
     path = cfg.save(ctx.obj.get("cfg_path"))
     click.echo(f"saved input config to {path}")

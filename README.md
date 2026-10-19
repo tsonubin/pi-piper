@@ -139,6 +139,9 @@ pi-piper service start | stop | restart | enable | disable | status | logs [-f]
   buffering — expect ~1s.
 - No transcoding is done for Bluetooth; the BT codec is whatever
   PulseAudio/PipeWire negotiates with the speaker (SBC by default).
+- The Sonos and AirPlay backends stream 16-bit WAV, so `input.format` must
+  be `S16_LE` for them; the Bluetooth backend passes any ALSA capture
+  format through to paplay unchanged.
 
 ## License
 

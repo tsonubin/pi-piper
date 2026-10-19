@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import IO
 
+from pi_piper.audio.formats import alsa_format_to_paplay
 from pi_piper.config import Config
 from pi_piper.sinks.base import AudioSink, SinkError
 
@@ -142,13 +143,17 @@ class BluetoothSink(AudioSink):
                 "is pipewire-pulse or pulseaudio running?"
             )
         log.info("routing audio to %s", sink)
+        try:
+            paplay_format = alsa_format_to_paplay(self.cfg.input.format)
+        except ValueError as e:
+            raise SinkError(str(e)) from e
         cmd = [
             "paplay",
             f"--device={sink}",
             "--raw",
             f"--rate={self.cfg.input.rate}",
             f"--channels={self.cfg.input.channels}",
-            "--format=s16le",
+            f"--format={paplay_format}",
         ]
         self._proc = subprocess.Popen(cmd, stdin=pcm_stream, bufsize=0)
 

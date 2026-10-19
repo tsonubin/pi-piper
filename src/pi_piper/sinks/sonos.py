@@ -4,18 +4,15 @@ import http.server
 import logging
 import socket
 import socketserver
-import struct
 import threading
 from collections import deque
 from typing import IO
 
+from pi_piper.audio.formats import alsa_format_bits, wav_header
 from pi_piper.config import Config
 from pi_piper.sinks.base import AudioSink, SinkError
 
 log = logging.getLogger(__name__)
-
-WAV_HEADER_SIZE = 44
-
 
 def discover_sonos() -> list[dict[str, str]]:
     try:
@@ -27,26 +24,6 @@ def discover_sonos() -> list[dict[str, str]]:
         {"uid": d.uid, "name": d.player_name, "ip": d.ip_address}
         for d in devices
     ]
-
-
-def _build_wav_header(rate: int, channels: int, bits_per_sample: int) -> bytes:
-    byte_rate = rate * channels * bits_per_sample // 8
-    block_align = channels * bits_per_sample // 8
-    return (
-        b"RIFF"
-        + struct.pack("<I", 0xFFFFFFFF)
-        + b"WAVE"
-        + b"fmt "
-        + struct.pack("<I", 16)
-        + struct.pack("<H", 1)
-        + struct.pack("<H", channels)
-        + struct.pack("<I", rate)
-        + struct.pack("<I", byte_rate)
-        + struct.pack("<H", block_align)
-        + struct.pack("<H", bits_per_sample)
-        + b"data"
-        + struct.pack("<I", 0xFFFFFFFF)
-    )
 
 
 class _Broadcaster:
@@ -209,9 +186,17 @@ class SonosSink(AudioSink):
     def start(self, pcm_stream: IO[bytes]) -> None:
         if self._server is not None:
             raise SinkError("sink already started")
+        try:
+            bits = alsa_format_bits(self.cfg.input.format)
+        except ValueError as e:
+            raise SinkError(str(e)) from e
+        if bits != 16:
+            raise SinkError(
+                "sonos backend serves 16-bit WAV; set input.format to S16_LE "
+                f"(got {self.cfg.input.format!r})"
+            )
         zone = self._resolve_zone()
-        bits = 16 if self.cfg.input.format.upper() in {"S16_LE", "S16LE"} else 16
-        header = _build_wav_header(self.cfg.input.rate, self.cfg.input.channels, bits)
+        header = wav_header(self.cfg.input.rate, self.cfg.input.channels, bits)
         self._broadcaster = _Broadcaster(pcm_stream)
         self._broadcaster.start()
         port = self.cfg.sonos.stream_port

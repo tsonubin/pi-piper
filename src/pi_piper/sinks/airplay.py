@@ -4,11 +4,11 @@ import asyncio
 import concurrent.futures
 import logging
 import os
-import struct
 import threading
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
+from pi_piper.audio.formats import alsa_format_bits, wav_header
 from pi_piper.config import Config, state_dir
 from pi_piper.sinks.base import AudioSink, SinkError
 
@@ -28,26 +28,6 @@ def _protocol_enum(proto: str) -> Protocol:
             return member
     known = ", ".join(m.name.lower() for m in _Protocol)
     raise SinkError(f"unknown airplay protocol {proto!r}; known: {known}")
-
-
-def _wav_header(rate: int, channels: int, bits: int = 16) -> bytes:
-    byte_rate = rate * channels * bits // 8
-    block_align = channels * bits // 8
-    return (
-        b"RIFF"
-        + struct.pack("<I", 0xFFFFFFFF)
-        + b"WAVE"
-        + b"fmt "
-        + struct.pack("<I", 16)
-        + struct.pack("<H", 1)
-        + struct.pack("<H", channels)
-        + struct.pack("<I", rate)
-        + struct.pack("<I", byte_rate)
-        + struct.pack("<H", block_align)
-        + struct.pack("<H", bits)
-        + b"data"
-        + struct.pack("<I", 0xFFFFFFFF)
-    )
 
 
 async def _scan_airplay(timeout: float = 5.0) -> list[dict[str, str]]:
@@ -144,8 +124,17 @@ class AirPlaySink(AudioSink):
     def start(self, pcm_stream: IO[bytes]) -> None:
         if self._loop_thread is not None:
             raise SinkError("sink already started")
+        try:
+            bits = alsa_format_bits(self.cfg.input.format)
+        except ValueError as e:
+            raise SinkError(str(e)) from e
+        if bits != 16:
+            raise SinkError(
+                "airplay backend streams 16-bit WAV; set input.format to S16_LE "
+                f"(got {self.cfg.input.format!r})"
+            )
         self._fifo_path = self._make_fifo()
-        header = _wav_header(self.cfg.input.rate, self.cfg.input.channels)
+        header = wav_header(self.cfg.input.rate, self.cfg.input.channels)
         self._stop.clear()
 
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
