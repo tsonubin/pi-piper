@@ -77,9 +77,10 @@ class AlsaCapture:
             "-t", "raw",
         ]
         log.info("starting capture: %s", " ".join(cmd))
-        self._proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
-        )
+        # stderr inherited: chatty ALSA warnings otherwise fill an undrained
+        # pipe and can block arecord; inheriting also surfaces real capture
+        # errors in the journal.
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
         assert self._proc.stdout is not None
         return self._proc.stdout
 
