@@ -41,8 +41,8 @@ def test_unknown_format_is_rejected_with_known_list() -> None:
     ("fmt", "paplay_name"),
     [
         ("S16_LE", "s16le"),
-        ("S24_LE", "s24le"),
-        ("S24_3LE", "s24_3le"),
+        ("S24_LE", "s24-32le"),
+        ("S24_3LE", "s24le"),
         ("S32_LE", "s32le"),
         ("U8", "u8"),
     ],
@@ -65,9 +65,10 @@ def test_wav_header_fields() -> None:
     assert struct.unpack("<I", h[40:44])[0] == 0xFFFFFFFF
 
 
-def test_sonos_rejects_non_16bit_before_touching_network() -> None:
+@pytest.mark.parametrize("fmt", ["S32_LE", "S16_BE"])
+def test_sonos_rejects_non_s16le_before_touching_network(fmt: str) -> None:
     cfg = Config()
-    cfg.input.format = "S32_LE"
+    cfg.input.format = fmt
     with pytest.raises(SinkError, match="16-bit"):
         SonosSink(cfg).start(io.BytesIO(b""))
 
@@ -80,3 +81,20 @@ def test_airplay_rejects_non_16bit_before_spawning_threads(
     cfg.input.format = "S24_LE"
     with pytest.raises(SinkError, match="16-bit"):
         AirPlaySink(cfg).start(io.BytesIO(b""))
+
+
+def test_airplay_stop_releases_writer_blocked_on_fifo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # pyatv never opened the FIFO: stop() must still let the writer exit.
+    import threading
+
+    monkeypatch.setenv("PI_PIPER_STATE_DIR", str(tmp_path))
+    sink = AirPlaySink(Config())
+    sink._fifo_path = sink._make_fifo()
+    sink._stop.set()
+    writer = threading.Thread(target=lambda: open(sink._fifo_path, "wb").close(), daemon=True)
+    writer.start()
+    sink._writer_thread = writer
+    sink.stop()
+    assert not writer.is_alive()

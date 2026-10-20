@@ -21,16 +21,18 @@ _ALSA_BITS = {
     "S32BE": 32,
 }
 
-#: PulseAudio/PipeWire sample-format names for `paplay --format=`
+#: PulseAudio/PipeWire sample-format names for `paplay --format=`. ALSA's
+#: S24_LE is 24-bit in a 32-bit container (Pulse "s24-32le"); ALSA's packed
+#: 3-byte S24_3LE is Pulse "s24le".
 _PAPLAY_NAMES = {
     "S8": "s8",
     "U8": "u8",
     "S16LE": "s16le",
     "S16BE": "s16be",
-    "S24LE": "s24le",
-    "S24BE": "s24be",
-    "S243LE": "s24_3le",
-    "S243BE": "s24_3be",
+    "S24LE": "s24-32le",
+    "S24BE": "s24-32be",
+    "S243LE": "s24le",
+    "S243BE": "s24be",
     "S32LE": "s32le",
     "S32BE": "s32be",
 }
@@ -54,6 +56,11 @@ def alsa_format_bits(fmt: str) -> int:
         raise ValueError(
             f"unsupported ALSA format {fmt!r}; known: {_KNOWN_FORMATS}"
         ) from None
+
+
+def is_s16le(fmt: str) -> bool:
+    """True when fmt is S16_LE, the only layout a PCM WAV header describes here."""
+    return _normalize(fmt) == "S16LE"
 
 
 def alsa_format_to_paplay(fmt: str) -> str:

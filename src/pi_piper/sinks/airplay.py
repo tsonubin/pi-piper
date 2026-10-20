@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
-from pi_piper.audio.formats import alsa_format_bits, wav_header
+from pi_piper.audio.formats import alsa_format_bits, is_s16le, wav_header
 from pi_piper.config import Config, state_dir
 from pi_piper.sinks.base import AudioSink, SinkError
 
@@ -128,9 +128,9 @@ class AirPlaySink(AudioSink):
             bits = alsa_format_bits(self.cfg.input.format)
         except ValueError as e:
             raise SinkError(str(e)) from e
-        if bits != 16:
+        if not is_s16le(self.cfg.input.format):
             raise SinkError(
-                "airplay backend streams 16-bit WAV; set input.format to S16_LE "
+                "airplay backend streams 16-bit little-endian WAV; set input.format to S16_LE "
                 f"(got {self.cfg.input.format!r})"
             )
         self._fifo_path = self._make_fifo()
@@ -151,11 +151,18 @@ class AirPlaySink(AudioSink):
         self._stream_done.clear()
         fut = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
 
+        fifo_path = self._fifo_path
+
         def _writer() -> None:
-            assert self._fifo_path is not None
-            with open(self._fifo_path, "wb") as f:
-                f.write(header)
-                f.flush()
+            with open(fifo_path, "wb") as f:
+                if self._stop.is_set():
+                    # stop() opened the read end only to release this open().
+                    return
+                try:
+                    f.write(header)
+                    f.flush()
+                except BrokenPipeError:
+                    return
                 while not self._stop.is_set():
                     chunk = pcm_stream.read(4096)
                     if not chunk:
@@ -194,6 +201,7 @@ class AirPlaySink(AudioSink):
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._loop_thread is not None:
             self._loop_thread.join(timeout=5)
+        self._release_writer()
         if self._fifo_path is not None and self._fifo_path.exists():
             try:
                 self._fifo_path.unlink()
@@ -204,6 +212,22 @@ class AirPlaySink(AudioSink):
         self._writer_thread = None
         self._airplay_future = None
         self._fifo_path = None
+
+    def _release_writer(self) -> None:
+        """If pyatv never opened the FIFO, the writer thread is still blocked in
+        open(..., "wb"); unlinking cannot wake it. Briefly open the read end so
+        that open() returns and the writer sees the stop flag and exits."""
+        writer = self._writer_thread
+        if writer is None or not writer.is_alive() or self._fifo_path is None:
+            return
+        try:
+            fd = os.open(str(self._fifo_path), os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return
+        try:
+            writer.join(timeout=2)
+        finally:
+            os.close(fd)
 
     def is_alive(self) -> bool:
         if self._loop_thread is None or not self._loop_thread.is_alive():

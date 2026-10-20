@@ -103,7 +103,12 @@ class Config:
         # half-written). Same directory keeps the rename on one filesystem.
         tmp = path.with_name(path.name + ".tmp")
         try:
-            with tmp.open("w", encoding="utf-8") as fh:
+            # Create the temp file 0600 up front so credentials are never
+            # readable by others while being written; drop any stale temp
+            # file first since O_CREAT keeps an existing file's mode.
+            tmp.unlink(missing_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 yaml.safe_dump(asdict(self), fh, sort_keys=False)
             if created:
                 # AirPlay credentials end up in this file: keep user configs

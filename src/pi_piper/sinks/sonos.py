@@ -8,7 +8,7 @@ import threading
 from collections import deque
 from typing import IO
 
-from pi_piper.audio.formats import alsa_format_bits, wav_header
+from pi_piper.audio.formats import alsa_format_bits, is_s16le, wav_header
 from pi_piper.config import Config
 from pi_piper.sinks.base import AudioSink, SinkError
 
@@ -190,9 +190,9 @@ class SonosSink(AudioSink):
             bits = alsa_format_bits(self.cfg.input.format)
         except ValueError as e:
             raise SinkError(str(e)) from e
-        if bits != 16:
+        if not is_s16le(self.cfg.input.format):
             raise SinkError(
-                "sonos backend serves 16-bit WAV; set input.format to S16_LE "
+                "sonos backend serves 16-bit little-endian WAV; set input.format to S16_LE "
                 f"(got {self.cfg.input.format!r})"
             )
         zone = self._resolve_zone()
