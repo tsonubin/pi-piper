@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import stat
+import tempfile
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -101,13 +102,12 @@ class Config:
         # over the target. A crash mid-write must never leave a truncated
         # config (the next load would then fail, possibly with credentials
         # half-written). Same directory keeps the rename on one filesystem.
-        tmp = path.with_name(path.name + ".tmp")
+        # Each writer owns its temporary file. A shared .tmp name lets one
+        # concurrent save unlink or replace another save's in-flight data.
+        fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".tmp-", dir=path.parent)
+        tmp = Path(tmp_name)
         try:
-            # Create the temp file 0600 up front so credentials are never
-            # readable by others while being written; drop any stale temp
-            # file first since O_CREAT keeps an existing file's mode.
-            tmp.unlink(missing_ok=True)
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            # mkstemp creates the file exclusively with mode 0600.
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 yaml.safe_dump(asdict(self), fh, sort_keys=False)
             if created:

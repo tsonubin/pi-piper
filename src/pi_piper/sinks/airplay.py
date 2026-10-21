@@ -134,7 +134,7 @@ class AirPlaySink(AudioSink):
                 f"(got {self.cfg.input.format!r})"
             )
         self._fifo_path = self._make_fifo()
-        header = wav_header(self.cfg.input.rate, self.cfg.input.channels)
+        header = wav_header(self.cfg.input.rate, self.cfg.input.channels, bits)
         self._stop.clear()
 
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)

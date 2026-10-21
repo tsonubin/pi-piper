@@ -191,3 +191,29 @@ def test_incoercible_values_fall_back_to_defaults(paths: tuple[Path, Path]) -> N
     assert cfg.input.rate == 44100
     assert cfg.bluetooth.target_mac is None
     assert cfg.airplay.credentials == {}
+
+
+def test_concurrent_saves_use_distinct_temporary_files(monkeypatch, tmp_path):
+    """Two atomic saves must not unlink or rename each other's temp file."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import yaml
+
+    path = tmp_path / "config.yaml"
+    barrier = threading.Barrier(2)
+    original_dump = yaml.safe_dump
+
+    def simultaneous_dump(*args, **kwargs):
+        barrier.wait(timeout=5)
+        return original_dump(*args, **kwargs)
+
+    monkeypatch.setattr(yaml, "safe_dump", simultaneous_dump)
+    first = Config(backend="airplay")
+    second = Config(backend="sonos")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(cfg.save, path) for cfg in (first, second)]
+        for future in futures:
+            assert future.result(timeout=5) == path
+    assert Config.load(path).backend in {"airplay", "sonos"}
+    assert not list(tmp_path.glob("*.tmp*"))
