@@ -12,7 +12,6 @@ depends=(
     'python-yaml'
     'python-soco'
     'python-pyatv'
-    'python-dbus-next'
     'python-zeroconf'
     'alsa-utils'
     'bluez'

@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import IO
 
+from pi_piper.audio.formats import alsa_format_to_paplay
 from pi_piper.config import Config
 from pi_piper.sinks.base import AudioSink, SinkError
 
@@ -22,10 +23,14 @@ class BluetoothDevice:
 
 
 class BluetoothCtl:
-    """Thin wrapper over `bluetoothctl` for pairing/connection from the CLI."""
+    """Thin wrapper over `bluetoothctl` for pairing/connection from the CLI.
 
-    def __init__(self, adapter: str = "hci0"):
-        self.adapter = adapter
+    Operates on bluez's default controller (the first adapter bluez brings
+    up); selecting among several adapters needs a per-process `select`
+    session and is not supported yet.
+    """
+
+    def __init__(self) -> None:
         if not shutil.which("bluetoothctl"):
             raise SinkError("bluetoothctl not found; install bluez")
 
@@ -110,7 +115,7 @@ class BluetoothSink(AudioSink):
     def __init__(self, cfg: Config):
         super().__init__(cfg)
         self._proc: subprocess.Popen[bytes] | None = None
-        self.ctl = BluetoothCtl(cfg.bluetooth.adapter)
+        self.ctl = BluetoothCtl()
 
     def _ensure_connected(self) -> str:
         mac = self.cfg.bluetooth.target_mac
@@ -142,13 +147,17 @@ class BluetoothSink(AudioSink):
                 "is pipewire-pulse or pulseaudio running?"
             )
         log.info("routing audio to %s", sink)
+        try:
+            paplay_format = alsa_format_to_paplay(self.cfg.input.format)
+        except ValueError as e:
+            raise SinkError(str(e)) from e
         cmd = [
             "paplay",
             f"--device={sink}",
             "--raw",
             f"--rate={self.cfg.input.rate}",
             f"--channels={self.cfg.input.channels}",
-            "--format=s16le",
+            f"--format={paplay_format}",
         ]
         self._proc = subprocess.Popen(cmd, stdin=pcm_stream, bufsize=0)
 

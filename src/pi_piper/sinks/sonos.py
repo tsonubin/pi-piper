@@ -4,17 +4,15 @@ import http.server
 import logging
 import socket
 import socketserver
-import struct
 import threading
+from collections import deque
 from typing import IO
 
+from pi_piper.audio.formats import alsa_format_bits, is_s16le, wav_header
 from pi_piper.config import Config
 from pi_piper.sinks.base import AudioSink, SinkError
 
 log = logging.getLogger(__name__)
-
-WAV_HEADER_SIZE = 44
-
 
 def discover_sonos() -> list[dict[str, str]]:
     try:
@@ -28,35 +26,27 @@ def discover_sonos() -> list[dict[str, str]]:
     ]
 
 
-def _build_wav_header(rate: int, channels: int, bits_per_sample: int) -> bytes:
-    byte_rate = rate * channels * bits_per_sample // 8
-    block_align = channels * bits_per_sample // 8
-    return (
-        b"RIFF"
-        + struct.pack("<I", 0xFFFFFFFF)
-        + b"WAVE"
-        + b"fmt "
-        + struct.pack("<I", 16)
-        + struct.pack("<H", 1)
-        + struct.pack("<H", channels)
-        + struct.pack("<I", rate)
-        + struct.pack("<I", byte_rate)
-        + struct.pack("<H", block_align)
-        + struct.pack("<H", bits_per_sample)
-        + b"data"
-        + struct.pack("<I", 0xFFFFFFFF)
-    )
-
-
 class _Broadcaster:
-    """Reads from a single PCM source and fans bytes out to N HTTP listeners."""
+    """Reads from a single PCM source and fans bytes out to N HTTP listeners.
+
+    Each subscriber's buffer is guarded by that subscriber's condition (the
+    same lock the pump uses to append and the handler uses to drain), so a
+    chunk can't be torn by a concurrent join or dropped by a racing clear().
+    A slow listener's backlog is capped at MAX_CHUNKS with drop-oldest: for a
+    live line-in, skipping stale audio beats unbounded lag or memory growth
+    on a memory-tight Pi.
+    """
+
+    #: Per-subscriber backlog cap. At the default 44.1kHz stereo S16 input a
+    #: 4096-byte chunk is ~23ms, so 256 chunks is ~6s — far beyond the ~1s
+    #: Sonos buffering, so drops only ever hit a genuinely stalled client.
+    MAX_CHUNKS = 256
 
     def __init__(self, stream: IO[bytes], chunk: int = 4096):
         self._stream = stream
         self._chunk = chunk
         self._lock = threading.Lock()
-        self._buffers: dict[int, list[bytes]] = {}
-        self._conds: dict[int, threading.Condition] = {}
+        self._subs: dict[int, tuple[threading.Condition, deque[bytes]]] = {}
         self._next_id = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._pump, daemon=True)
@@ -67,20 +57,22 @@ class _Broadcaster:
     def stop(self) -> None:
         self._stop.set()
 
-    def subscribe(self) -> tuple[int, threading.Condition, list[bytes]]:
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
+    def subscribe(self) -> tuple[int, threading.Condition, deque[bytes]]:
         cond = threading.Condition()
-        buf: list[bytes] = []
+        buf: deque[bytes] = deque()
         with self._lock:
             sub_id = self._next_id
             self._next_id += 1
-            self._buffers[sub_id] = buf
-            self._conds[sub_id] = cond
+            self._subs[sub_id] = (cond, buf)
         return sub_id, cond, buf
 
     def unsubscribe(self, sub_id: int) -> None:
         with self._lock:
-            self._buffers.pop(sub_id, None)
-            self._conds.pop(sub_id, None)
+            self._subs.pop(sub_id, None)
 
     def _pump(self) -> None:
         while not self._stop.is_set():
@@ -88,12 +80,20 @@ class _Broadcaster:
             if not data:
                 break
             with self._lock:
-                for sub_id, buf in self._buffers.items():
+                subs = list(self._subs.values())
+            for cond, buf in subs:
+                with cond:
+                    if len(buf) >= self.MAX_CHUNKS:
+                        buf.popleft()
                     buf.append(data)
-                    cond = self._conds.get(sub_id)
-                    if cond is not None:
-                        with cond:
-                            cond.notify()
+                    cond.notify()
+        # Wake handler threads so they notice stop() and exit even when the
+        # capture stream never reaches EOF.
+        with self._lock:
+            subs = list(self._subs.values())
+        for cond, _buf in subs:
+            with cond:
+                cond.notify_all()
 
 
 class _ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -101,7 +101,9 @@ class _ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
-def _make_handler(broadcaster: _Broadcaster, header: bytes) -> type[http.server.BaseHTTPRequestHandler]:
+def _make_handler(
+    broadcaster: _Broadcaster, header: bytes
+) -> type[http.server.BaseHTTPRequestHandler]:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:  # noqa: A003
@@ -125,8 +127,10 @@ def _make_handler(broadcaster: _Broadcaster, header: bytes) -> type[http.server.
             try:
                 while True:
                     with cond:
-                        while not buf:
+                        while not buf and not broadcaster.stopped:
                             cond.wait(timeout=1.0)
+                        if not buf:
+                            return  # broadcaster stopped and backlog drained
                         chunk = b"".join(buf)
                         buf.clear()
                     try:
@@ -182,9 +186,17 @@ class SonosSink(AudioSink):
     def start(self, pcm_stream: IO[bytes]) -> None:
         if self._server is not None:
             raise SinkError("sink already started")
+        try:
+            bits = alsa_format_bits(self.cfg.input.format)
+        except ValueError as e:
+            raise SinkError(str(e)) from e
+        if not is_s16le(self.cfg.input.format):
+            raise SinkError(
+                "sonos backend serves 16-bit little-endian WAV; set input.format to S16_LE "
+                f"(got {self.cfg.input.format!r})"
+            )
         zone = self._resolve_zone()
-        bits = 16 if self.cfg.input.format.upper() in {"S16_LE", "S16LE"} else 16
-        header = _build_wav_header(self.cfg.input.rate, self.cfg.input.channels, bits)
+        header = wav_header(self.cfg.input.rate, self.cfg.input.channels, bits)
         self._broadcaster = _Broadcaster(pcm_stream)
         self._broadcaster.start()
         port = self.cfg.sonos.stream_port
@@ -215,4 +227,8 @@ class SonosSink(AudioSink):
             self._broadcaster = None
 
     def is_alive(self) -> bool:
-        return self._server is not None and self._server_thread is not None and self._server_thread.is_alive()
+        return (
+            self._server is not None
+            and self._server_thread is not None
+            and self._server_thread.is_alive()
+        )

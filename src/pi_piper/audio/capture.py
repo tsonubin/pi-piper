@@ -77,9 +77,10 @@ class AlsaCapture:
             "-t", "raw",
         ]
         log.info("starting capture: %s", " ".join(cmd))
-        self._proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
-        )
+        # stderr inherited: chatty ALSA warnings otherwise fill an undrained
+        # pipe and can block arecord; inheriting also surfaces real capture
+        # errors in the journal.
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
         assert self._proc.stdout is not None
         return self._proc.stdout
 
@@ -87,18 +88,18 @@ class AlsaCapture:
         if self._proc is None:
             return
         proc, self._proc = self._proc, None
-        proc.terminate()
         try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        finally:
+            # Popen.wait() does not close stdout; repeated daemon restarts
+            # would otherwise retain one pipe FD per capture generation.
+            if proc.stdout is not None:
+                proc.stdout.close()
 
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
-
-    def __enter__(self) -> IO[bytes]:
-        return self.start()
-
-    def __exit__(self, *_exc: object) -> None:
-        self.stop()
