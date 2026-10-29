@@ -59,7 +59,11 @@ sudo systemctl daemon-reload
 ## Configure
 
 Config lives at `/etc/pi-piper/config.yaml` (system) or
-`~/.config/pi-piper/config.yaml` (user). Override with `PI_PIPER_CONFIG`.
+`~/.config/pi-piper/config.yaml` (user). Precedence: `PI_PIPER_CONFIG`, then
+an existing user config, then the system config — so `pi-piper` commands run
+without sudo write to the user file, which then wins on every later run. The
+systemd unit pins `PI_PIPER_CONFIG=/etc/pi-piper/config.yaml`, so the service
+always reads the system file.
 
 ```sh
 # 1. Pick your capture device.
@@ -135,6 +139,22 @@ pi-piper service start | stop | restart | enable | disable | status | logs [-f]
   buffering — expect ~1s.
 - No transcoding is done for Bluetooth; the BT codec is whatever
   PulseAudio/PipeWire negotiates with the speaker (SBC by default).
+- The Sonos and AirPlay backends stream 16-bit WAV, so `input.format` must
+  be `S16_LE` for them; the Bluetooth backend passes any ALSA capture
+  format through to paplay unchanged.
+- Bluetooth uses bluez's default adapter (the first one bluez brings up);
+  picking among several adapters is not supported yet.
+
+## Development
+
+`uv` is the blessed toolchain (any venv + pip works too):
+
+```sh
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e '.[dev]'
+.venv/bin/python -m pytest -q    # targeted tests live in tests/
+.venv/bin/ruff check src tests
+```
 
 ## License
 

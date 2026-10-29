@@ -1,37 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
-import struct
 import threading
 from pathlib import Path
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
+from pi_piper.audio.formats import alsa_format_bits, is_s16le, wav_header
 from pi_piper.config import Config, state_dir
 from pi_piper.sinks.base import AudioSink, SinkError
+
+if TYPE_CHECKING:
+    from pyatv.const import Protocol
 
 log = logging.getLogger(__name__)
 
 
-def _wav_header(rate: int, channels: int, bits: int = 16) -> bytes:
-    byte_rate = rate * channels * bits // 8
-    block_align = channels * bits // 8
-    return (
-        b"RIFF"
-        + struct.pack("<I", 0xFFFFFFFF)
-        + b"WAVE"
-        + b"fmt "
-        + struct.pack("<I", 16)
-        + struct.pack("<H", 1)
-        + struct.pack("<H", channels)
-        + struct.pack("<I", rate)
-        + struct.pack("<I", byte_rate)
-        + struct.pack("<H", block_align)
-        + struct.pack("<H", bits)
-        + b"data"
-        + struct.pack("<I", 0xFFFFFFFF)
-    )
+def _protocol_enum(proto: str) -> Protocol:
+    """Resolve a user-supplied AirPlay protocol name (any case) to pyatv's
+    Protocol enum, e.g. "raop" -> Protocol.RAOP."""
+    from pyatv.const import Protocol as _Protocol
+
+    for member in _Protocol:
+        if member.name.lower() == proto.lower():
+            return member
+    known = ", ".join(m.name.lower() for m in _Protocol)
+    raise SinkError(f"unknown airplay protocol {proto!r}; known: {known}")
 
 
 async def _scan_airplay(timeout: float = 5.0) -> list[dict[str, str]]:
@@ -68,7 +64,8 @@ class AirPlaySink(AudioSink):
         self._writer_thread: threading.Thread | None = None
         self._fifo_path: Path | None = None
         self._stop = threading.Event()
-        self._stream_task: asyncio.Task | None = None
+        self._stream_done = threading.Event()
+        self._airplay_future: concurrent.futures.Future[None] | None = None
 
     def _make_fifo(self) -> Path:
         fifo_dir = state_dir() / "airplay"
@@ -114,10 +111,9 @@ class AirPlaySink(AudioSink):
             raise SinkError(f"airplay target not found (id={target_id} name={target_name})")
         for proto, creds in self.cfg.airplay.credentials.items():
             try:
-                proto_enum = getattr(pyatv.const.Protocol, proto.capitalize())
-                match.set_credentials(proto_enum, creds)
-            except Exception as e:
-                log.warning("could not apply credentials for %s: %s", proto, e)
+                match.set_credentials(_protocol_enum(proto), creds)
+            except SinkError as e:
+                log.warning("could not apply credentials: %s", e)
         atv = await pyatv.connect(match, loop)
         try:
             log.info("streaming to airplay device %s", match.name)
@@ -128,8 +124,17 @@ class AirPlaySink(AudioSink):
     def start(self, pcm_stream: IO[bytes]) -> None:
         if self._loop_thread is not None:
             raise SinkError("sink already started")
+        try:
+            bits = alsa_format_bits(self.cfg.input.format)
+        except ValueError as e:
+            raise SinkError(str(e)) from e
+        if not is_s16le(self.cfg.input.format):
+            raise SinkError(
+                "airplay backend streams 16-bit little-endian WAV; set input.format to S16_LE "
+                f"(got {self.cfg.input.format!r})"
+            )
         self._fifo_path = self._make_fifo()
-        header = _wav_header(self.cfg.input.rate, self.cfg.input.channels)
+        header = wav_header(self.cfg.input.rate, self.cfg.input.channels, bits)
         self._stop.clear()
 
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -137,15 +142,27 @@ class AirPlaySink(AudioSink):
         while self._loop is None:
             threading.Event().wait(0.01)
 
-        fut = asyncio.run_coroutine_threadsafe(
-            self._start_async(self._fifo_path), self._loop
-        )
+        async def _runner() -> None:
+            try:
+                await self._start_async(self._fifo_path)
+            finally:
+                self._stream_done.set()
+
+        self._stream_done.clear()
+        fut = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
+
+        fifo_path = self._fifo_path
 
         def _writer() -> None:
-            assert self._fifo_path is not None
-            with open(self._fifo_path, "wb") as f:
-                f.write(header)
-                f.flush()
+            with open(fifo_path, "wb") as f:
+                if self._stop.is_set():
+                    # stop() opened the read end only to release this open().
+                    return
+                try:
+                    f.write(header)
+                    f.flush()
+                except BrokenPipeError:
+                    return
                 while not self._stop.is_set():
                     chunk = pcm_stream.read(4096)
                     if not chunk:
@@ -156,16 +173,35 @@ class AirPlaySink(AudioSink):
                     except BrokenPipeError:
                         break
 
-        self._writer_thread = threading.Thread(target=_writer, daemon=True, name="pi-piper-airplay-writer")
+        self._writer_thread = threading.Thread(
+            target=_writer, daemon=True, name="pi-piper-airplay-writer"
+        )
         self._writer_thread.start()
+        fut.add_done_callback(self._stream_finished)
         self._airplay_future = fut
+
+    def _stream_finished(self, fut: concurrent.futures.Future[None]) -> None:
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc is not None:
+            log.error("airplay stream failed: %s", exc)
+        else:
+            log.info("airplay stream ended")
 
     def stop(self) -> None:
         self._stop.set()
         if self._loop is not None:
+            fut = self._airplay_future
+            if fut is not None and not fut.done():
+                # Cancel the stream task and wait for the coroutine to unwind
+                # so its `finally: atv.close()` runs before the loop stops.
+                self._loop.call_soon_threadsafe(fut.cancel)
+                self._stream_done.wait(timeout=2)
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._loop_thread is not None:
             self._loop_thread.join(timeout=5)
+        self._release_writer()
         if self._fifo_path is not None and self._fifo_path.exists():
             try:
                 self._fifo_path.unlink()
@@ -174,7 +210,31 @@ class AirPlaySink(AudioSink):
         self._loop = None
         self._loop_thread = None
         self._writer_thread = None
+        self._airplay_future = None
         self._fifo_path = None
 
+    def _release_writer(self) -> None:
+        """If pyatv never opened the FIFO, the writer thread is still blocked in
+        open(..., "wb"); unlinking cannot wake it. Briefly open the read end so
+        that open() returns and the writer sees the stop flag and exits."""
+        writer = self._writer_thread
+        if writer is None or not writer.is_alive() or self._fifo_path is None:
+            return
+        try:
+            fd = os.open(str(self._fifo_path), os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return
+        try:
+            writer.join(timeout=2)
+        finally:
+            os.close(fd)
+
     def is_alive(self) -> bool:
-        return self._loop_thread is not None and self._loop_thread.is_alive()
+        if self._loop_thread is None or not self._loop_thread.is_alive():
+            return False
+        fut = self._airplay_future
+        if fut is not None and fut.done():
+            # Stream ended or failed: the pipeline is dead even though the
+            # event loop thread is still parked in run_forever().
+            return False
+        return True
